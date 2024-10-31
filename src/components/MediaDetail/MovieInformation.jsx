@@ -1,5 +1,6 @@
 import { currencyFormatter } from "../../libs/utils"
 
+
 const MovieInformation = ({movieInfo = {}}) => {
   return (
     <div>

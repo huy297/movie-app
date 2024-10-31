@@ -1,26 +1,37 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import MovieCard from "../MovieCard";
-
+import useFetch from "../../hooks/useFetch";
+// import { useModalContext } from "../../context/ModalProvider";
 const MediaList = ({ title, tabs }) => {
-  const [mediaList, setMediaList] = useState([]);
-  const [activeTabId, setActiveTabId] = useState(tabs[0]?.id);
-  useEffect(() => {
-    const url = tabs.find((tab) => tab.id === activeTabId)?.url;
-    if (url === undefined) return;
-    fetch(url, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        Authorization: `Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlZGI3ZmY2ODkyZjE4ZWQwZWIwNWU2YTBkYmE5NjBhZCIsIm5iZiI6MTcyOTE0OTA0NC4wNTE4OSwic3ViIjoiNjcxMGI4MGE2Zjc3MDdhZjQwZmE3ZWM0Iiwic2NvcGVzIjpbImFwaV9yZWFkIl0sInZlcnNpb24iOjF9.cyMMiGB_xCp3Jz-dRhqeHg0n6LAqqcQXMhBzJbGrUe0`,
-      },
-    }).then(async (res) => {
-      const data = await res.json();
-      const trendingMediaList = data.results.slice(0, 12);
-      setMediaList(trendingMediaList);
+  // const {
+  //   activeTabTopTrendingId,
+  //   setActiveTabTopTrendingId,
+  //   activeTabTopRatedId,
+  //   setActiveTabTopRatedId,
+  // } = useModalContext();
+  // // const setActiveTabId = (id) => {
+  // //   if (title === "Trending") {
+  // //     setActiveTabTopTrendingId(id);
+  // //   } else {
+  // //     setActiveTabTopRatedId(id);
+  // //   }
+  // // };
 
-      console.log("??", trendingMediaList);
-    });
-  }, [tabs,activeTabId]);
+  // const setActiveTabId = title === "Trending" ? setActiveTabTopTrendingId : setActiveTabTopRatedId;
+  // useEffect(() => {
+  //   setActiveTabId(tabs[0].id);
+  // },[tabs, setActiveTabId]);
+
+  // const activeTabId = title === "Trending" ? activeTabTopTrendingId : activeTabTopRatedId;
+   const [activeTabId, setActiveTabId] = useState(tabs[0].id);
+  
+  const url = tabs.find((tab) => tab.id === activeTabId)?.url;
+
+  const { data } = useFetch({ url });
+
+  const mediaList = (data.results || []).slice(0, 12);
+
+  console.log("activeTabId", activeTabId);
   return (
     <div className="bg-black px-8 py-10 text-[1.2vw] text-white">
       <div className="mb-6 flex items-center gap-4">
@@ -39,7 +50,7 @@ const MediaList = ({ title, tabs }) => {
           ))}
         </ul>
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:gap-6 sm:grid-cols-4 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6 lg:gap-6">
         {mediaList.map((media) => (
           <MovieCard
             id={media.id}
