@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
 import { useModalContext } from "../context/ModalProvider";
 import Login from "./Authentic/Login";
-import SignUp from "./Authentic/Signup";
+import SignUp from "./Authentic/SignUp";
 
 const Header = () => {
   const { isLoggedIn, handleLogout } = useAuth();
