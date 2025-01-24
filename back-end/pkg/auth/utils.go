@@ -1,14 +1,15 @@
 package auth
 
 import (
-	"database/sql"
+	"auth-backend/pkg/models"
+
+	"gorm.io/gorm"
 )
 
-func validateCredentials(db *sql.DB, username, password string) bool {
-	var storedPassword string
-
-	err := db.QueryRow("SELECT password FROM users WHERE username = ?", username).Scan(&storedPassword)
-	if err != nil || storedPassword != password {
+func validateCredentials(db *gorm.DB, username, password string) bool {
+	var user models.User
+	err := db.Where("username = ?", username).Select("password").First(&user).Error
+	if err != nil || user.Password != password {
 		return false
 	}
 	return true

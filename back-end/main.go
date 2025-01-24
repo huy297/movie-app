@@ -3,6 +3,7 @@ package main
 import (
 	"auth-backend/pkg/auth"
 	"auth-backend/pkg/database"
+	"auth-backend/pkg/redis"
 	"log"
 	"net/http"
 
@@ -13,7 +14,14 @@ import (
 
 func main() {
 	db := database.Connect(config.LoadConfig())
-	defer db.Close()
+	rdb := redis.InitRedisClient()
+	ctx := redis.GetContext()
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("Failed to connect database:", err)
+	}
+	defer sqlDB.Close()
 
 	r := gin.Default()
 
@@ -33,7 +41,7 @@ func main() {
 		c.Next()
 	})
 
-	auth.RegisterRoutes(r, db)
+	auth.RegisterRoutes(r, db, rdb, ctx)
 
 	log.Println("Server is running on port 8080")
 	log.Fatal(http.ListenAndServe(":8080", r))

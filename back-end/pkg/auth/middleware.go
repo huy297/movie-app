@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,8 @@ import (
 func AuthenticateJWT() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := c.GetHeader("Authorization")
+
+		fmt.Println("My token is", tokenString)
 		if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
 			tokenString = tokenString[7:]
 		} else {
@@ -19,6 +22,8 @@ func AuthenticateJWT() gin.HandlerFunc {
 		}
 
 		claims := &jwt.MapClaims{}
+
+		fmt.Println("My token is", tokenString)
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
 		})
@@ -27,6 +32,8 @@ func AuthenticateJWT() gin.HandlerFunc {
 			c.Abort()
 		}
 		c.Set("username", (*claims)["username"])
+		fmt.Println("My user_id is", (*claims)["user_id"])
+		c.Set("user_id", (*claims)["user_id"])
 		c.Next()
 	}
 }

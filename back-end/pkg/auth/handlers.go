@@ -1,27 +1,37 @@
 package auth
 
 import (
-	"database/sql"
+	"auth-backend/pkg/models"
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"gorm.io/gorm"
 )
 
-func LoginHandler(db *sql.DB) gin.HandlerFunc {
+func LoginHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, password, ok := c.Request.BasicAuth()
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
+		var user models.User
+		err := db.Where("username = ?", username).First(&user).Error
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+
 		if !validateCredentials(db, username, password) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		}
 
-		token, err := generateJWT(username)
+		token, err := generateJWT(username, user.ID)
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
@@ -32,96 +42,79 @@ func LoginHandler(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-func RegisterHandler(db *sql.DB) gin.HandlerFunc {
+func RegisterHandler(db *gorm.DB, rdb *redis.Client, ctx context.Context) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var user struct {
-			Username  string    `json:"username" binding:"required"`
-			Password  string    `json:"password" binding:"required"`
-			Email     string    `json:"email" binding:"required"`
-			FirstName string    `json:"first_name" biding:"required"`
-			LastName  string    `json:"last_name" biding:"required"`
-			BirthDay  time.Time `json:"birth_day" biding:"required"`
-		}
+		var user models.User
 		if err := c.ShouldBindJSON(&user); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
 
-		var exits bool
-		err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", user.Username).Scan(&exits)
+		//  var count int64
+		//  err := db.Model(&models.User{}).Where("username = ?", user.Username).Count(&count).Error
+		//  if err != nil {
+		//  	c.JSON(http.StatusInternalServerError, gin.H{"error": "Database server error"})
+		//  return
+		// }
+		// if count > 0 {
+		// 	c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
+		// 	return
+		// }
+		exists, err := rdb.SIsMember(ctx, "username", user.Username).Result()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Redis server error"})
 			return
 		}
-		if exits {
+		if exists {
 			c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
 			return
 		}
-
-		_, err = db.Exec("INSERT INTO users (username, password, email, first_name, last_name, birthday) VALUES (?, ?, ?, ?, ?, ?)", user.Username, user.Password, user.Email, user.FirstName, user.LastName, user.BirthDay)
+		err = db.Create(&user).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user"})
 			return
 		}
+		rdb.SAdd(ctx, "username", user.Username)
 
 		c.JSON(http.StatusCreated, gin.H{"message": "User registered"})
 	}
 }
 
-func ProtectedHandler() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		username, exists := c.Get("username")
-
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message":  "You are authorized",
-			"username": username,
-		})
-	}
-
-}
-
-func EditProfile(db *sql.DB) gin.HandlerFunc {
+func EditProfile(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, exists := c.Get("username")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
-		query := "UPDATE users SET "
 		type UpdateProfileRequest struct {
 			FirstName string    `json:"first_name"`
 			LastName  string    `json:"last_name"`
 			BirthDay  time.Time `json:"birth_day"`
 		}
 		var req UpdateProfileRequest
-		args := []interface{}{}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
+
+		updates := map[string]interface{}{}
+
 		if req.FirstName != "" {
-			query += "first_name = ?, "
-			args = append(args, req.FirstName)
+			updates["first_name"] = req.FirstName
 		}
 		if req.LastName != "" {
-			query += "last_name = ?, "
-			args = append(args, req.LastName)
+			updates["last_name"] = req.LastName
 		}
 		if req.BirthDay != (time.Time{}) {
-			query += "birthday = ?, "
-			args = append(args, req.BirthDay)
+			updates["birth_day"] = req.BirthDay
 		}
-		query = query[:len(query)-2]
+		if len(updates) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+			return
+		}
 
-		query += " WHERE username = ?"
-		args = append(args, username)
-
-		_, err := db.Exec(query, args...)
+		err := db.Model(&models.User{}).Where("username = ?", username).Updates(updates).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
 			return
@@ -130,7 +123,7 @@ func EditProfile(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-func UploadImageHandler(db *sql.DB) gin.HandlerFunc {
+func UploadImageHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, exists := c.Get("username")
 		if !exists {
@@ -166,8 +159,7 @@ func UploadImageHandler(db *sql.DB) gin.HandlerFunc {
 
 		avatarURL := fmt.Sprintf("http://localhost:8080/avatars/%s_%s", username, fileExtension)
 
-		_, err = db.Exec("UPDATE users SET avatar = ? WHERE username = ?", avatarURL, username)
-
+		err = db.Model(&models.User{}).Where("username = ?", username).Update("avatar", avatarURL).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update avatar"})
 			return
@@ -177,5 +169,89 @@ func UploadImageHandler(db *sql.DB) gin.HandlerFunc {
 			"message":    "Avatar uploaded",
 			"avatar_url": avatarURL,
 		})
+	}
+}
+
+func GetFollowingList(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+			return
+		}
+		var followList []models.User
+		err := db.Joins("JOIN follows ON users.id = follows.following_id").Where("follows.follower_id = ?", userID).Find(&followList).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get follow list"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"following_list": followList})
+	}
+}
+
+func GetFollowedList(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+			return
+		}
+		var followList []models.User
+		err := db.Joins("JOIN follows ON users.id = follows.follower_id").Where("follows.following_id = ?", userID).Find(&followList).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get follow list"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"followed_list": followList})
+	}
+}
+
+func FollowUserHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		userID = int(userID.(float64))
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+			return
+		}
+		var followUserID int
+		if err := c.ShouldBindJSON(&followUserID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			return
+		}
+		fmt.Println(userID)
+		var follow models.Follow
+		follow.FollowerID = userID.(int)
+		follow.FollowingID = followUserID
+		err := db.Create(&follow).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to follow user"})
+			return
+		}
+	}
+}
+
+func UnfollowUserHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		UserID, exists := c.Get("user_id")
+		UserID = int(UserID.(float64))
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+			return
+		}
+		var followUserID int
+		if err := c.ShouldBindJSON(&followUserID); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			return
+		}
+		var follow models.Follow
+		follow.FollowerID = UserID.(int)
+		follow.FollowingID = followUserID
+		err := db.Where("follower_id = ? AND following_id = ?", UserID, followUserID).Delete(&follow).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unfollow user"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "User unfollowed"})
 	}
 }
